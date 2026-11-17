@@ -208,9 +208,11 @@ Integration in `BrowserState.handleNewTabFromChromium`:
 
 ### 4.3 Close Selection Override
 
-When the active normal tab is closed, the Mac side pre-computes the next selection target **before** the opener graph is modified.
+When the active tab is closed (a normal tab, or an open pinned or bookmark tab), the Mac side pre-computes the next selection target **before** the opener graph is modified.
 
-**Selection priority** (`NativeTabDecisionEngine.selectionTarget`):
+**Most recently used first** (`NativeTabDecisionEngine.recentSelectionTarget`): the target is the most recently visited tab still in `tabs` (`TabSwitchManager.visitedTabIDs`, actual visits only), skipping tabs closing in the same batch, panes already leaving with a split, and panes of a bookmark split closing whole. A closing split pane prefers a surviving pane of its split. `splitPaneWillBeRemoved` records the pane's partners while its split still lists it, because Chromium can dissolve the split before the removal lands.
+
+**Fallback priority**, used only when no visited tab survives (`NativeTabDecisionEngine.selectionTarget`):
 
 1. **Child** — a tab whose opener is the closing tab (right-first)
 2. **Sibling** — a tab sharing the same opener (right-first)
@@ -220,7 +222,7 @@ When the active normal tab is closed, the Mac side pre-computes the next selecti
 
 **Flow**:
 
-1. `prepareForActiveTabClose(tabId:)` is called. It invokes `selectionTarget` and stores the result as `pendingSelectionOverride`.
+1. `prepareForActiveTabClose(tabId:)` is called. It invokes `recentSelectionTarget`. Only when that finds nothing and the closing tab is a normal tab does it fall back to `selectionTarget` and the pinned/bookmark ancestor redirect. It stores the result as `pendingSelectionOverride`.
 2. Chromium performs the actual close and sends `activeTabChanged`.
 3. `handleChromiumActiveTabChanged` checks `pendingSelectionOverride`:
    - If `closingTabStillExists` in `tabs` → discard (stale override from unrelated focus change)
