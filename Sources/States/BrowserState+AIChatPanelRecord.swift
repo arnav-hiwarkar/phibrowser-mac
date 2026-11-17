@@ -161,12 +161,13 @@ extension BrowserState {
     /// another window. It writes a closed tab's recently-closed entry as soon
     /// as this returns, before this window's `closeTab` runs, so the bridge
     /// callback calls this directly rather than through EventBus. Only a split
-    /// pane has anything to do here: it is noted as leaving, and its panel
-    /// record is handed over (`handOffAIChatPanelRecord`).
+    /// pane has anything to do here: it is noted as leaving with its other
+    /// panes, and its panel record is handed over (`handOffAIChatPanelRecord`).
     func splitPaneWillBeRemoved(_ tabId: Int) {
         guard let tab = tabs.first(where: { $0.guid == tabId }),
-              splitGroup(forTabId: tabId) != nil else { return }
+              let split = splitGroup(forTabId: tabId) else { return }
         splitPaneIdsBeingRemoved.insert(tabId)
+        splitPartnersOfRemovedPanes[tabId] = split.otherTabIds(of: tabId)
         handOffAIChatPanelRecord(of: tab)
     }
 

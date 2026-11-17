@@ -336,6 +336,10 @@ class BrowserState {
     /// Split panes Chromium announced it is removing whose `closeTab` has not
     /// run yet. See `splitPaneWillBeRemoved(_:)`.
     var splitPaneIdsBeingRemoved: Set<Int> = []
+    /// The other panes of each pane in `splitPaneIdsBeingRemoved`, captured
+    /// while its split still lists it: the split can drop the pane before
+    /// `closeTab` runs, and close selection keeps focus inside the split.
+    var splitPartnersOfRemovedPanes: [Int: [Int]] = [:]
     var aiChatCollapseWatches: [ObjectIdentifier: (tabId: Int, watch: AnyCancellable)] = [:]
     var aiChatPanelURLWatches: [ObjectIdentifier: AnyCancellable] = [:]
     var aiChatPanelRecordSubscriptions = Set<AnyCancellable>()
@@ -5495,27 +5499,46 @@ class BrowserState {
     }
 
     func prepareForActiveTabClose(tabId: Int) {
-        guard focusingTab?.guid == tabId else { return }
-        guard normalTabs.contains(where: { $0.guid == tabId }) else { return }
-        let visibleIds = normalTabs.map(\.guid).filter {
-            $0 == tabId || applyingRemovalIDs?.contains($0) != true
-        }
+        guard focusingTab?.guid == tabId,
+              tabs.contains(where: { $0.guid == tabId }) else { return }
+        let selectableIds = Set(tabs.map(\.guid))
+            .subtracting(applyingRemovalIDs ?? [])
+            .subtracting(splitPaneIdsBeingRemoved)
+            .subtracting(splitPaneIdsClosingBehindBookmark)
+        let visitedTabIds = MainActor.assumeIsolated { tabSwitchManager.visitedTabIDs }
+        var targetTabId = NativeTabDecisionEngine.recentSelectionTarget(
+            visitedTabIds: visitedTabIds,
+            closingTabId: tabId,
+            selectableTabIds: selectableIds,
+            splitPartnerTabIds: splitGroup(forTabId: tabId)?.otherTabIds(of: tabId)
+                ?? splitPartnersOfRemovedPanes[tabId] ?? []
+        )
         AppLogDebug(
             "[NativeTab] prepareForActiveTabClose tabId=\(tabId) " +
-            "visibleIds=\(visibleIds) " +
-            "graph={openers=\(nativeRelationGraph.openerByTabId), " +
-            "localFix=\(nativeRelationGraph.locallyFixedOpenerTabIds)}"
-        )
-        var targetTabId = NativeTabDecisionEngine.selectionTarget(
-            visibleNormalTabIds: visibleIds,
-            closingTabId: tabId,
-            relationGraph: nativeRelationGraph
+            "recentTarget=\(targetTabId.map(String.init) ?? "nil")"
         )
 
-        if let target = targetTabId,
-           nativeRelationGraph.openerByTabId[tabId] != nil,
-           !isOpenerRelated(target: target, closingTabId: tabId) {
-            if let pinnedTarget = findPinnedOrBookmarkAncestor(of: tabId),
+        // Nothing visited survives: fall back to the strip-relative rule,
+        // which only applies to a normal tab.
+        if targetTabId == nil {
+            guard normalTabs.contains(where: { $0.guid == tabId }) else { return }
+            let visibleIds = normalTabs.map(\.guid).filter {
+                $0 == tabId || applyingRemovalIDs?.contains($0) != true
+            }
+            AppLogDebug(
+                "[NativeTab] prepareForActiveTabClose fallback visibleIds=\(visibleIds) " +
+                "graph={openers=\(nativeRelationGraph.openerByTabId), " +
+                "localFix=\(nativeRelationGraph.locallyFixedOpenerTabIds)}"
+            )
+            targetTabId = NativeTabDecisionEngine.selectionTarget(
+                visibleNormalTabIds: visibleIds,
+                closingTabId: tabId,
+                relationGraph: nativeRelationGraph
+            )
+            if let target = targetTabId,
+               nativeRelationGraph.openerByTabId[tabId] != nil,
+               !isOpenerRelated(target: target, closingTabId: tabId),
+               let pinnedTarget = findPinnedOrBookmarkAncestor(of: tabId),
                applyingRemovalIDs?.contains(pinnedTarget) != true {
                 AppLogDebug("[NativeTab] prepareForActiveTabClose redirecting to pinned/bookmark ancestor \(pinnedTarget)")
                 targetTabId = pinnedTarget
@@ -5593,6 +5616,7 @@ class BrowserState {
         defer {
             applyingRemovalIDs = nil
             splitPaneIdsBeingRemoved.subtract(removalIDs)
+            for tabId in removalIDs { splitPartnersOfRemovedPanes[tabId] = nil }
         }
         // Determine the override against the pre-removal graph, excluding all
         // other tabs in this batch as possible destinations.

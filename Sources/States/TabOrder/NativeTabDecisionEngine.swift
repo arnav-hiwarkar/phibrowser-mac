@@ -513,6 +513,25 @@ enum NativeTabDecisionEngine {
         return insertAfterIndex.map { $0 + 1 } ?? 0
     }
 
+    /// The tab to select when the focused tab closes: the most recently
+    /// visited tab that can take focus. A closing split pane hands focus to
+    /// a surviving pane instead (the most recently visited one, else the
+    /// first), so the split stays on screen. nil when neither exists; the
+    /// caller then falls back to `selectionTarget`.
+    static func recentSelectionTarget(
+        visitedTabIds: [Int],
+        closingTabId: Int,
+        selectableTabIds: Set<Int>,
+        splitPartnerTabIds: [Int] = []
+    ) -> Int? {
+        let recent = visitedTabIds.filter { $0 != closingTabId && selectableTabIds.contains($0) }
+        let partners = splitPartnerTabIds.filter { $0 != closingTabId && selectableTabIds.contains($0) }
+        if !partners.isEmpty {
+            return recent.first(where: partners.contains) ?? partners.first
+        }
+        return recent.first
+    }
+
     static func selectionTarget(
         visibleNormalTabIds: [Int],
         closingTabId: Int,
