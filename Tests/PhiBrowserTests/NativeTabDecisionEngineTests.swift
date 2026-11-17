@@ -725,4 +725,60 @@ final class NativeTabDecisionEngineTests: XCTestCase {
 
         XCTAssertNil(graph.openerByTabId[4])
     }
+
+    func testCloseSelectionReturnsToThePreviouslyVisitedTab() {
+        // Visits, most recent first: A(1) B(2) C(3). Closing A selects B,
+        // not the next-most-recent C and not a strip neighbour.
+        XCTAssertEqual(
+            NativeTabDecisionEngine.recentSelectionTarget(
+                visitedTabIds: [1, 2, 3],
+                closingTabId: 1,
+                selectableTabIds: [1, 2, 3]
+            ),
+            2
+        )
+    }
+
+    func testCloseSelectionSkipsVisitedTabsThatCannotTakeFocus() {
+        // B(2) is closing in the same batch; D(4) is already gone.
+        XCTAssertEqual(
+            NativeTabDecisionEngine.recentSelectionTarget(
+                visitedTabIds: [1, 4, 2, 3],
+                closingTabId: 1,
+                selectableTabIds: [1, 3]
+            ),
+            3
+        )
+        XCTAssertNil(
+            NativeTabDecisionEngine.recentSelectionTarget(
+                visitedTabIds: [1],
+                closingTabId: 1,
+                selectableTabIds: [1, 5]
+            )
+        )
+    }
+
+    func testCloseSelectionKeepsASplitOnScreen() {
+        // Closing pane 1 of split [1, 5, 6]: the most recent surviving pane
+        // wins over a more recently visited tab outside the split.
+        XCTAssertEqual(
+            NativeTabDecisionEngine.recentSelectionTarget(
+                visitedTabIds: [1, 2, 6, 5],
+                closingTabId: 1,
+                selectableTabIds: [1, 2, 5, 6],
+                splitPartnerTabIds: [5, 6]
+            ),
+            6
+        )
+        // A pane that was never focused still keeps the split on screen.
+        XCTAssertEqual(
+            NativeTabDecisionEngine.recentSelectionTarget(
+                visitedTabIds: [1, 2],
+                closingTabId: 1,
+                selectableTabIds: [1, 2, 5],
+                splitPartnerTabIds: [5]
+            ),
+            5
+        )
+    }
 }
